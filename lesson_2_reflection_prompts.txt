@@ -1,12 +1,6 @@
-﻿What happens when you initialize a repository? If, that's the question. If I can
-
-Why do you need to do it?
-
-You need to create a file. It forves you to thinl about where you're putting things. 
+﻿What happens when you initialize a repository? Why do you need to do it?
 
 How is the staging area different from the working directory and the repository?
-
- It's a middle ground
 What value do you think it offers?
 
 How can you use the staging area to make sure you have one commit per logical
