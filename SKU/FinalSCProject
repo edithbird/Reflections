@@ -1,0 +1,707 @@
+###Developing a system to prevent inventory stockouts. 
+
+[In a classic overview of forecasting demand,] the authors Chambers, Mullick, and Smith note that "in production and inventory control, increased accuracy is likely to lead to lower safety stocks. Here the manager and forecaster must weigh the cost of a more sophisticated and more expensive technique against potential savings in inventory costs.(https://hbr.org/1971/07/how-to-choose-the-right-forecasting-technique)Harvard Business Review
+
+The researchers wrote this is 1971, and perhaps forecasting techniques are no longer carry such a hefty price tag. For this project we endeavor to provide Sigco, Inc. with an inventory management model that will help prevent stockouts of key products. Overall, Sigco uses 300 different items, but there are only a handful of ones which are utilized regularly. 
+
+
+
+
+To develop this model, we performed time series analysis with monthly demand data since January 2012 on thirty different SKUs that Sigco uses with such regularity that stock outs are common. We used a combination of forecasting and the EOQ. We exclusively rely on time series forecasting; because we are not looking into factors which may affect the SKU behavior, we do not do any regression that looks for correlation.   
+
+
+###Decide on a horizon 
+
+*Initially we had 2 years of historical data, but research into time series analysis revealed that's not enough to identify underlying trends and seasonality. Forecasting with this monthly data in POM consistently revealed that the lowest error, mainly MAPE, came from naive forecasting. 
+
+*Secured three more years of data. Once intitially plotted with the assistance of the forecasting package in R, we were able to patterns. We could call on special functions to decompose each time series for error, trend and seasonality and to return a forecast based utilizing the best model, mainly exponential smoothing. The forecasting model which returns the lowest error is automatically chosen. 
+
+*To apply these predictions to the EOQ model, we use a monthly forcast for the average demand and divide it by 21 (business days per month) to reach an average daily demand $$\bar{x}_d$$.
+
+*To arrive at the sigma of daily demand, $$\sigma_d$$, we take the standard deviation of monthly demand for the hold out, divide it by 21 and then multiply it by the seasonal index, also returned as part of the decomposition function. 
+
+*Next, we calculate daily safety stock and reorder levels for eacj month. Because there has been a shift from month to month historically, we think it makes sense to apply an inventory system which takes this into account.  
+
+*Because Sigco would like to factor in a 10% increase in business, we can multiple the ROP and SS by 1.1 
+
+
+We did monthly and quarterly analyses. Quarterly returned lower errors, however in developing a test model where we "held out" about 20%, monthly analyses returned lower MAPEs. 
+ 
+
+###Note to Chris...if Additive ts, [Seasonally Adjusting
+[If you have a seasonal time series that can be described using an additive model, you can seasonally adjust the time series by estimating the seasonal component, and subtracting the estimated seasonal component from the original time series. We can do this using the estimate of the seasonal component calculated by the “decompose()” function.](http://a-little-book-of-r-for-time-series.readthedocs.io/en/latest/src/timeseries.html#plotting-time-series)
+
+#Preliminary Analysis
+Graphing the data
+
+Are there consistent patterns?
+
+Is there a significant trend?
+
+Is seasonality important? 
+
+Is there evidence of the presence of business cycles? 
+Are there any outliers in the data that need to be explained by those with expert knowledge?
+
+How strong are the relationships among the variables available for analysis? 
+
+#Find the highest volume SKUs and do inventory management calculations based on historical data. 
+
+## Equations based on the following assumptions: 
+1. Continuous Review Policy 
+
+1. consistent lead time of 6 days and a service level of 98%.
+
+1. Service level of 98%.
+
+###Average Monthly Demand:$$\bar{x}_d$$
+
+###Standard Deviation of Monthly Demand:$$\sigma_d$$
+
+###Lead Time:$$L = .214$$
+
+###Service Level:$$z = 2.05$$
+
+
+
+```{r Libraries, message=FALSE, warning=FALSE, include=FALSE}
+library(knitr)
+library(dplyr)
+library(tidyr)
+library(ggvis)
+library(ggplot2)
+library(forecast)
+library(caTools)
+library(fma)
+library(zoo)
+library(TTR)
+
+
+```
+
+#The Model
+
+###Step by Step for Item_Code SS06CLR96130, 1/4 CLEAR 96X130 Demand Product Code
+
+1. Plot the time series. 
+
+```{r, message=FALSE, warning=FALSE, include=FALSE}
+A <- ts(c(1074,1381,1181,1143,1220,1176,1379,1667,1413,1830,1400,1114,1217,1203,1324,1805,1474,1370,2239,1817,1884,2188,2118,2026,1626,1526,1099,1422,1979,1752,1909,2196,2275,2613,2327,2649,2008,1520,1695,2076,1725,2184,2591,2627,2590,2975,2349,2800,1926,1870,2327,2273,2418,2596,2578,3146,2656,2386), 
+        start = c(2012, 1), frequency = 12)
+IndexA <- c(0.815778603882693,0.775161778879251,0.729588324383863,0.887512047363348,0.880903208040755,0.892468676855294,1.1177199504337,1.14374225526642,1.12377805314608,1.32259396943412,1.12818394602781,1.18256918628666,0.815778603882693)
+Forecast16A <- c(2117.852, 2241.534,1998.211,2463.527,2488.607, 2273.582,2989.195,2996.958,2900.06,3430.171,2923.857,2971.102, 2387)
+Month.Yr <- c("January 2016", "February 2016", "March 2016", "April 2016", "May 2016", "June 2016", "July 2016", "August 2016", "September 2016","October 2016",  "November 2016", "December 2016", "January 2017")
+
+variable1 = window(A, end = 2015,12)
+V2 = ets(variable1, model = "MAM")
+
+SigmaA=sd(Forecast16A/21)
+LeadTime = 5
+ServiceLevel = 2.05
+tableA <- data.frame(Month.Yr, IndexA, Forecast16A)
+
+```
+
+
+```{r, eval=FALSE, include=FALSE}
+#Trying to calculate the value of sigma
+tableA %>% mutate(SigmaA*IndexA)
+```
+
+
+1. Plot the time series
+There appears to be trend and seasonality. 
+
+```{r A time series, echo=FALSE, message=FALSE, warning=FALSE}
+plot.ts(A)
+```
+
+2. A season plot can highlight patterns.
+```{r}
+
+ggseasonplot(A, col =rainbow(12), year.labels=TRUE)
+```
+
+3. Find an appropriate forecasting model with the lowest error. The summary below begins with "M, A, M"; this is the Error, Trend, Season taxonomy and for this item_code means Error = Mutiplicative, Trend = Additive, Seasonality = Multiplicative. Time series data which follows this pattern fits best using the "Multiplicative Holt-Winters’ method". The MAPE error = 9.4%. Additionaly, the alpha, beta, and gamma values are given which are used in the smoothing equations.  
+
+```{r}
+WindowA <- window(variable1)
+WindowAA <- ets(WindowA)
+WindowAAA <- forecast(WindowAA, model = "MAM", h = 12)
+summary(WindowAA)
+
+```
+
+4. Because we are interested in using the monthly forcasted demand as a proxy for average demand in the EOQ model, we forecast out 12 months; this seems reasonable for our purposes and the further out we forcast, the less reliable it becomes. 
+
+```{r}
+WindowAAA
+```
+
+5. Below is a plot of the historical data, and the the 12 month forecast with 80 and 95% confidence intervals, in dark and light gray respectively 
+
+```{r}
+plot(forecast(ets(A),h=12),
+  ylab="Forecasted Demand")
+```
+
+6. To develop a test model based on the EOQ, we need a proxy for $$\bar{x}_d$$. Utilizing the monthly demand from 1/2012 - 12/2015, we project a 2016 monthly forecast. For the purposes of daily inventory management, this model has to be adjusted. Therefore, we divide the forecast by the number of business days in a month, $$\bar{x}_d=\frac{\hat{y}}{21}$$. 
+
+The table below shows the monthly forecast for 2016. 
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+ForecastV2 <- forecast(V2)
+results <- data.frame(ForecastV2)
+kable(tail(results, 13), digits = 0)
+```
+
+7. To get the standard deviation of daily demand, we look at the summary data for the forecast generated from the 1/2012-12/2015 data. A monthly seasonal correction is given under "Initial States: s = ...". We use this correction as part of our $$\sigma_d$$. We multiply the standard deviation of 2016's forecasted monthly demand/number of business days because this forecast was generated with a multiplicative model. 
+
+$$\sigma_d=\sigma_\frac{\hat{y_1...n}}{21}*s_i$$
+
+
+```{r}
+summary(V2)
+
+```
+
+8. Finally, with these key variables for the EOQ model we can simply calculate the average demand during lead time, the Reorder level and the safety stock. We follow the formulas below. 
+
+Lead Time:
+
+###$$L = .214$$
+Service Level:
+
+###$$z = 2.05$$
+
+Average demand during lead time: 
+
+###$$\bar{x}_L =  \bar{x}_d * L$$
+
+Safety Stock:
+
+###$$z*\sigma_d*\sqrt{L}$$
+
+Reorder Level:
+
+###$$\bar{x}_L+z*\sigma_d*\sqrt{L}$$
+
+#Fix Sigma value
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+NewtableA <- tableA %>% mutate(Daily.Demand = Forecast16A/21,  SigmaADemand = IndexA*SigmaA, Av.Demand.During.Lead.Time = Daily.Demand * LeadTime, Safety.Stock = ServiceLevel * SigmaADemand * sqrt(LeadTime), Reorder.Point = Av.Demand.During.Lead.Time + ServiceLevel *SigmaADemand * sqrt(LeadTime) ) %>% select(Month.Yr, Daily.Demand, SigmaADemand, Av.Demand.During.Lead.Time, Safety.Stock, Reorder.Point)
+
+kable(NewtableA, digits = 0)
+```
+
+
+#Product B
+###SS02CLR7284
+
+We follow the same process for this product with one difference. The best forecast is given with an additive amoothing model which means that the seasonal factor is added to the forecast. Therefore for our purposes in adjusting standard deviation, **$\sigma_d$**, we first divide the seasonal factor by the unadjusted forecast. Then to calculate the average monthly sigma of demand, we multiply the forecasted year's standard deviation (which has been divided by the nuber of business days) by the quotient and add it back to to the demand sigma. 
+
+$$\sigma_d=\sigma_\frac{\hat{y_1...n}}{21}+s_i$$
+
+
+```{r SS02CLR7284}
+B <- ts( c(468,538,687,932,1162,1067,1131,1201,1183,1082,793,505,498,382,401,752,955,878,999,1053,1007,1283,753,396,397,381,422,742,1028,1168,1216,1179,1329,1161,575,622,347,296,566,820,919,1379,1159,1132,1119,1238,904,699,512,471,744,789,943,1341,973,1255,1146,1045
+), start =c(2012, 1), frequency = 12)
+B.Actual <- c(512,471,744,789,943,1341,973,1255,1146,1045, NA, NA, NA)
+
+```
+
+```{r}
+plot(B, ylab="Demand for 3/32 CLEAR 72 X 84")
+ggseasonplot(B, col =rainbow(12), year.labels=TRUE, ylab = "Historical Demand")
+```
+
+```{r}
+variableB = window(B, end = 2015,12)
+```
+
+
+```{r}
+ETSB = ets(variableB, model = "MNA")
+Forecast16B <- forecast(ETSB)
+summary(ETSB)
+```
+
+
+
+```{r}
+#additive model take seasonal values from POM forecast and convert to percentage, divide the seasonal factor by the unadjusted forecast, 
+
+
+
+SeasonIndexB <- c(0.501662429102288,0.468511637003716,0.609035791120673,0.952278505769607,1.19225503618228,1.31781732837864,1.32163113631919,1.339233326814,1.36064932524936,1.39761392528848,0.887443770780364,0.651867787991395,0.501662429102288)
+
+#SeasonIndexB <- c(-0.482773453574297,-0.553115879868344,-0.422678526273348,-0.0648565959345644,0.159149787761454,0.357223800323074,0.319783182053715,0.35935637247597,0.398526137145371,0.404934007245761,-0.134344092527519,-0.367330984121297,-0.481704288637107)
+```
+
+
+```{r}
+resultsB <- data.frame(Forecast16B)
+
+resultsB <- resultsB %>% select(Point.Forecast)
+#XX <- resultsB %>% mutate(dailyDemand = Point.Forecast/21)
+#XXX <- XX %>% mutate(sigmadaily = sd(dailyDemand))
+#XXX
+#XXXX <- XXX %>% mutate(sigmadaily*SeasonnIndexB)
+#XXXX
+
+#resultsB %>% mutate(sigmab = sd(Point.Forecast))
+#resultsBSigma <- sd(resultsB$Point.Forecast)/21
+
+```
+
+
+```{r}
+resultsB <- tail(resultsB, 13)
+SigmaB=sd(resultsB$Point.Forecast)/21
+tableB <- data.frame(Month.Yr, SeasonIndexB, B.Actual)
+
+BForecast <- tail(resultsB, 13)
+```
+
+
+```{r}
+resultsB$Month.Yr <- Month.Yr
+Product.B <- inner_join(tableB, resultsB, by = "Month.Yr")
+Product.B
+SigmaB
+```
+
+
+#Sigma is calculated by taking the standard deviation of 2015's monthly data and multiplying it by the seasonal index that was calculated from Operations Management Testbook page 123. 
+
+```{r}
+Product.B.Table <- (Product.B %>% mutate(Daily.B.Demand = Point.Forecast/21,SigmaBDemand = SigmaB * SeasonIndexB,Av.B.Demand.During.Lead.Time = Daily.B.Demand * LeadTime ,B.Safety.Stock = ServiceLevel * SigmaBDemand * sqrt(LeadTime), B.Reorder.Point = Av.B.Demand.During.Lead.Time + ServiceLevel * SigmaBDemand * sqrt(LeadTime)))
+```
+
+
+###Below is the inventory management tool for product B
+
+```{r}
+kable(Product.B.Table, digits = 3)
+```
+
+
+
+###Below is a comparison of the actual vs. the forecasted demand for 2016 
+
+```{r}
+kable(Product.B %>% mutate(B.Actual.vs.Forecast = B.Actual-Point.Forecast, Percent.Off = B.Actual.vs.Forecast/Point.Forecast) %>% select(Month.Yr, B.Actual, Point.Forecast, B.Actual.vs.Forecast, Percent.Off), digits = 3) 
+```
+
+###This table shows the smoothing forecast looking forward
+
+```{r}
+Future.B <- forecast(ets(B, model = "MNA"))
+Future.B <- data.frame(Future.B)
+kable(Future.B, digits = 0)
+```
+
+
+###Test and train smoothing and arima. Arima fared better. 
+```{r, echo=TRUE}
+Btrain = B[1:48]
+Btest = B[49:58]
+#ets
+B.ets.train <- ets(Btrain)
+B.ets.forecast <- forecast(B.ets.train, h = 6)
+B.ets.accuracy <- accuracy(B.ets.forecast, Btest)
+B.ets.train;B.ets.accuracy;B.ets.forecast
+
+#arima
+arma_fitB <- auto.arima(Btrain)
+arma_forecastB <- forecast(arma_fitB, h = 10)
+arma_fit_accuracyB <- accuracy(arma_forecastB, Btest)
+arma_fitB; arma_forecastB; arma_fit_accuracyB
+```
+
+### Arima
+```{r, echo=TRUE}
+B.Data <- window(B)
+B.Arima.Model <- auto.arima(B.Data)
+B.Arima.Forecast <- forecast(B.Arima.Model, h = 6)
+B.Arima.Forecast
+#B.Arima.Fit <- accuracy(B.Arima.Model, B.Data)
+summary(B.Arima.Forecast)
+```
+
+###Naive
+```{r, echo=TRUE}
+
+X <- snaive(B.Data)
+forecast(X)
+kable(summary(forecast(X)))
+
+```
+
+
+
+
+
+plot(C)
+seasonplot(C,ylab="Demand", xlab="Month",
+           main="Seasonal plot: 1/4 SOLARBAN 60 TC 100 X 144 Demand",
+           year.labels=TRUE, year.labels.left=TRUE, col=1:20, pch=19)
+monthplot(C,ylab="Demand",xlab="Month",xaxt="n",
+          main="1/4 SOLARBAN 60 TC 100 X 144")
+ets(C)
+
+
+
+
+#SS06S6T100144
+
+```{r SS06S6T100144}
+
+#for inventory
+C <- ts( c(104,105,99,94,116,113,140,134,97,95,115,61,185,122,125,126,36,85,249,198,185,284,328,392,314,235,120,206,198,332,200,458,437,441,338,330,316,300,294,321,238,415,652,424,469,414,637,612), start =c(2012, 1), frequency = 12)
+#for forecast
+C.Five <- ts( c(104,105,99,94,116,113,140,134,97,95,115,61,185,122,125,126,36,85,249,198,185,284,328,392,314,235,120,206,198,332,200,458,437,441,338,330,316,300,294,321,238,415,652,424,469,414,637,612#,605,487,478,575,682,784,653,903,612,590
+), start =c(2012, 1), frequency = 12)
+#for actual
+C.Actual <- c(605,487,478,575,682,784,653,903,612,590, NA, NA, NA)
+
+#seasonal index from textbook 
+SeasonIndexC <- c(0.897387907885101,0.744080071608756,0.622996175441452,0.729432826104646,0.574172023761087,0.92277646675889,1.21181544470665,1.18545040279925,1.16006184392546,1.2049800634714,1.38465294165514,1.36219383188217,0.897387907885101
+)
+```
+
+###This is what the happened from 1/2012-12/2015
+
+```{r, eval=FALSE, include=FALSE}
+
+plot(C)
+seasonplot(C,ylab="Demand", xlab="Month",
+           main="Seasonal plot: 1/4 SOLARBAN 60 TC 100 X 144 Demand",
+           year.labels=TRUE, year.labels.left=TRUE, col=1:20, pch=19)
+monthplot(C,ylab="Demand",xlab="Month",xaxt="n",
+          main="1/4 SOLARBAN 60 TC 100 X 144")
+ets(C)
+
+```
+
+
+```{r}
+plot(C, ylab="Demand for 1/4 SOLARBAN 60 TC 100 X 144")
+ggseasonplot(C, col =rainbow(12), year.labels=TRUE, ylab = "Historical Demand")
+```
+
+### Arima gives the best forecast here
+
+```{r, echo=TRUE}
+C.Data <- window(C)
+C.Arima.Model <- auto.arima(C.Data)
+C.Arima.Forecast <- forecast(C.Arima.Model)
+C.Arima.Forecast
+#C.Arima.Fit <- accuracy(C.Arima.Model, C.Data)
+summary(C.Arima.Forecast)
+resultsC <- data.frame(C.Arima.Forecast)
+resultsC <- resultsC %>% select(C.Point.Forecast = Point.Forecast)
+resultsc <- kable(head(resultsC, 13))
+```
+
+
+
+```{r}
+SigmaC=sd(resultsC$C.Point.Forecast/21)
+tableC <- data.frame(Month.Yr,  C.Actual, SeasonIndexC)
+tableC
+```
+
+
+
+```{r}
+resultsC <- head(resultsC, 13)
+resultsC
+```
+
+
+
+
+```{r}
+resultsC$Month.Yr <- Month.Yr
+Product.C <- inner_join(tableC, resultsC, by = "Month.Yr")
+
+kable(Product.C, digits = 2)
+
+```
+
+
+```{r}
+kable(Product.C %>% mutate(C.Daily.Av.Demand = C.Point.Forecast/21), digits = 2)
+```
+
+
+Sigma daily demand = 
+```{r}
+CSD <- sd(Product.C$C.Point.Forecast)
+CSD
+
+```
+
+```{r}
+CSD/21
+```
+
+
+```{r}
+CSSD <- Product.C$C.Point.Forecast/21
+CSSD
+```
+
+Or, 
+```{r}
+sd(CSSD)
+```
+
+```{r}
+
+```
+
+
+```{r}
+
+
+sd(Product.C$C.Point.Forecast/21)
+Product.C$SeasonIndexC*Product.C$C.Point.Forecast/21
+```
+
+###Here I add the product of the Seasonal adjustment and the sigma proxy (2016 forecast ) to the sigma proxy
+
+```{r}
+Product.C.Table <- (Product.C %>% mutate(Daily.C.Demand = C.Point.Forecast/21, C.Sigma = SigmaC*SeasonIndexC+SigmaC, Av.C.Demand.During.Lead.Time = Daily.C.Demand * LeadTime ,C.Safety.Stock = ServiceLevel * C.Sigma * sqrt(LeadTime), C.Reorder.Point = Av.C.Demand.During.Lead.Time + ServiceLevel * C.Sigma * sqrt(LeadTime)))
+```
+
+
+###Below is the inventory management tool for product C
+
+```{r}
+kable(Product.C.Table, digits = 3)
+```
+
+
+
+
+
+```{r, include=FALSE}
+summary(forecast(ses(C.Five)))
+
+```
+
+
+
+
+
+resultsC <- data.frame(Forecast16C)
+resultsC <- resultsC %>% select(C.Point.Forecast = Point.Forecast)
+resultsC <- tail(resultsC, 13)
+kable(resultsC)
+
+
+
+
+
+```{r, eval=FALSE, include=FALSE}
+#best forecast for training and 2016 inventory measurements
+#ets(C)
+variableC = window(C)
+ets(variableC)
+ETSC = ets(variableC, model = "MAN")
+Forecast16C <- forecast(ETSC)
+summary(ETSC)
+Forecast16C
+
+
+```
+
+resultsC <- data.frame(Forecast16C)
+resultsC <- resultsC %>% select(C.Point.Forecast = Point.Forecast)
+resultsC <- tail(resultsC, 13)
+kable(resultsC)
+SigmaC=sd(resultsC$C.Point.Forecast/21)
+tableC <- data.frame(Month.Yr,  C.Actual)
+tableC
+
+
+```{r, echo=TRUE}
+#Test and train smoothing and arima. Arima fared better. 
+Ctrain = C[1:48]
+Ctest = C[49:58]
+#ets
+C.ets.train <- ets(Ctrain)
+C.ets.forecast <- forecast(C.ets.train, h = 6)
+C.ets.accuracy <- accuracy(C.ets.forecast, Ctest)
+C.ets.train;C.ets.accuracy;C.ets.forecast
+```
+
+```{r}
+
+#arima
+arma_fitC <- auto.arima(Ctrain)
+arma_forecastC <- forecast(arma_fitC, h = 12)
+arma_fit_accuracyC <- accuracy(arma_forecastC, Ctest)
+arma_fitC; arma_forecastC; arma_fit_accuracyC
+
+
+
+```
+
+
+
+```{r}
+#forecast(auto.arima(variableC), h = 12)
+#A.C <- auto.arima(variableC)
+#Arima.C <- forecast(A.C)
+#Arima.C 
+#str(Arima.C)
+#Arima.C_df <- data.frame(Arima.C)
+#kable(Arima.C_df, digits = 0)
+```
+
+### Arima
+```{r, echo=TRUE}
+C.Data <- window(C.Five)
+C.Arima.Model <- auto.arima(C.Data)
+C.Arima.Forecast <- forecast(C.Arima.Model)
+C.Arima.Forecast
+#C.Arima.Fit <- accuracy(C.Arima.Model, C.Data)
+summary(C.Arima.Forecast)
+C_df <- data.frame(C.Arima.Forecast)
+C_df <- C_df %>% select(C.Point.Forecast = Point.Forecast)
+kable(head(C_df, 13))
+```
+
+###Naive
+```{r, echo=TRUE}
+
+X <- snaive(C.Data)
+forecast(X)
+kable(summary(forecast(X)))
+
+```
+
+```{r Actual C forecast}
+ets(C.Five)
+ets(C.Five, model = "MNA")
+forecast(ets(C.Five))
+kable(summary(forecast(ets(C.Five))))
+```
+
+```{r}
+ets(C.Five)
+ETSC = ets(C.Five, model = "ANA")
+Forecast16C <- forecast(ETSC)
+summary(ETSC)
+```
+
+
+
+
+
+```{r}
+summary(forecast(ses(C.Five)))
+
+```
+
+
+```{r}
+CForecast <- tail(resultsC, 13)
+```
+
+
+```{r}
+resultsC$Month.Yr <- Month.Yr
+Product.C <- inner_join(tableC, resultsC, by = "Month.Yr")
+Product.C
+```
+
+
+```{r}
+Product.C.Table <- (Product.C %>% mutate(Daily.C.Demand = C.Point.Forecast/21,Av.C.Demand.During.Lead.Time = Daily.C.Demand * LeadTime ,C.Safety.Stock = ServiceLevel * SigmaC * sqrt(LeadTime), C.Reorder.Point = Av.C.Demand.During.Lead.Time + ServiceLevel * SigmaC * sqrt(LeadTime)))
+```
+
+
+###Below is the inventory management tool for product C
+
+```{r}
+kable(Product.C.Table, digits = 0)
+```
+
+
+
+###Below is a comparison of the actual vs. the forecasted demand for 2016 
+
+```{r}
+kable(Product.C %>% mutate(C.Actual.vs.Forecast = C.Actual-C.Point.Forecast) %>% select(Month.Yr, C.Actual, C.Point.Forecast, C.Actual.vs.Forecast), digits = 0) 
+```
+
+###This table shows the smoothing forecast looking forward
+
+```{r}
+Future.C <- forecast(ets(C, model = "MNA"))
+Future.C <- data.frame(Future.C)
+kable(Future.C, digits = 0)
+```
+
+
+###Test and train smoothing and arima. Arima fared better. 
+```{r, echo=TRUE}
+Ctrain = C[1:48]
+Ctest = C[49:58]
+
+#naive
+C.naive.train <- snaive(Ctrain)
+C.naive.forecast <- forecast(C.naive.train)
+C.naive.accuracy <- accuracy(C.naive.forecast, Ctest)
+#C.naive.forecast;C.naive.accuracy
+kable(C.naive.accuracy)
+
+#rwf
+#C.sma.train <- rwf(Ctrain)
+C.rwf.train <- rwf(Ctrain)
+C.rwf.forecast <- forecast(C.rwf.train)
+C.rwf.accuracy <- accuracy(C.rwf.forecast, Ctest)
+kable(C.rwf.accuracy)
+
+#ses
+C.ses.train <- ses(Ctrain)
+C.ses.forecast <- forecast(C.ses.train)
+C.ses.accuracy <- accuracy(C.ses.forecast, Ctest)
+#C.ses.forecast;C.ses.accuracy
+kable(C.ses.accuracy)
+#etsC
+C.ets.train <- ets(Ctrain)
+C.ets.forecast <- forecast(C.ets.train, h = 6)
+C.ets.accuracy <- accuracy(C.ets.forecast, Ctest)
+#C.ets.train;C.ets.accuracy
+kable(C.ets.accuracy)
+
+#Holt
+C.Holt.train <- holt(Ctrain)
+C.Holt.forecast <- forecast(C.Holt.train, h = 6)
+C.Holt.accuracy <- accuracy(C.Holt.forecast, Ctest)
+kable(C.Holt.accuracy)
+
+#arima
+arma_fitC <- auto.arima(Ctrain)
+arma_forecastC <- forecast(arma_fitC, h = 10)
+arma_fit_accuracyC <- accuracy(arma_forecastC, Ctest)
+#arma_fitC; arma_fit_accuracyC
+kable(arma_fit_accuracyC)
+
+```
+
+```{r}
+
+#ReserveSample
+#str(ReserveSample)
+#ReserveOct <- data.frame(ReserveSample)
+#Sample <- read.csv("ReserveSample.csv", header = TRUE, stringsAsFactors = FALSE)
+#head(ReserveOct)
+```
+
